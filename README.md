@@ -251,3 +251,11 @@ the doc comment at the top of `DecisionEngine.cs` before relying on its exact th
 - **Packages fail to resolve on first open:** the Meta XR packages come from a scoped registry
   (`npm.developer.oculus.com`) and the two ROS packages are pulled directly from GitHub — make sure the
   Editor machine has outbound network access to both.
+
+## Copyright
+
+© 2026 ARISE Lab, New Mexico Institute of Mining and Technology (NMT). All rights reserved.
+
+This repository contains research code for an active, unpublished project. It is shared for internal lab
+use and collaboration — contact the repository maintainers before any external use, distribution, or
+publication of this code or its results.
