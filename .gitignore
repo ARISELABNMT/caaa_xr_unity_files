@@ -72,3 +72,10 @@ crashlytics-build.properties
 /Assets/Oculus/Avatar2_SampleAssets/SampleAssets/SampleAssets/PresetAvatars_Quest.zip
 /Assets/Oculus/Avatar2_SampleAssets/SampleAssets/SampleAssets/PresetAvatars_Rift.zip
 /Assets/Samples/Meta Avatars SDK/40.0.1/Sample Scenes/Environments/NeutralRig/Directional_flipped.hdr
+
+# JVM/Editor crash and replay debug logs (local artifacts, not build output)
+hs_err_pid*.log
+replay_pid*.log
+
+# Local Vuforia/QCAR runtime cache — obsolete, project now uses MRUK QR tracking (see PassthroughQRAligner.cs)
+/QCAR/

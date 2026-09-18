@@ -31,6 +31,9 @@ public class ControlPanelUI : MonoBehaviour
     public RobotTaskManager robotTaskManager;
     public RosXRBridge rosBridge;
 
+    [Header("Decision Engine (auto-found if left empty)")]
+    public DecisionEngine decisionEngine;
+
     private static readonly Color ReadyGreen = new Color(0.153f, 0.682f, 0.376f);
 
     private string _selectedKit = "Kit A";
@@ -38,6 +41,8 @@ public class ControlPanelUI : MonoBehaviour
 
     void Start()
     {
+        if (!decisionEngine) decisionEngine = FindObjectOfType<DecisionEngine>();
+
         kitAButton.onClick.AddListener(() => SelectKit("Kit A"));
         kitBButton.onClick.AddListener(() => SelectKit("Kit B"));
         kitCButton.onClick.AddListener(() => SelectKit("Kit C"));
@@ -125,6 +130,7 @@ public class ControlPanelUI : MonoBehaviour
         SetStatus("EMERGENCY STOP");
         statusText.color = Color.red;
         rosBridge?.PublishMode("safety");
+        decisionEngine?.ForceSafety();
     }
 
     void OnReset()
@@ -135,6 +141,11 @@ public class ControlPanelUI : MonoBehaviour
         SetStatus("Ready");
         statusText.color = Color.white;
         rosBridge?.PublishReset(true);
+        decisionEngine?.ClearSafetyLatch();
+        // Stops any kitting run stuck mid pick-and-place (e.g. waiting on a /xr/result that will never
+        // arrive because Safety halted the robot) — without this, BeginKitting() would silently no-op on
+        // every future Start press since RobotTaskManager's _isRunning would stay true forever.
+        robotTaskManager?.AbortKitting();
     }
 
     void OnStart()

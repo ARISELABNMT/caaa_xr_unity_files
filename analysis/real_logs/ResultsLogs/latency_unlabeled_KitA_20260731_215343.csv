@@ -1,0 +1,2 @@
+﻿mean_ms,max_ms,std_ms,sample_count,kit_name,condition_label,kit_success
+0.0005,0.0449,0.0009,11318,Kit A,,True

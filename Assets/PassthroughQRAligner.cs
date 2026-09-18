@@ -227,7 +227,7 @@ public class PassthroughQRAligner : MonoBehaviour
             return;
 
         Transform markerT = _qrTrackable.transform;
-        Vector3 markerCenter = markerT.position;
+        Vector3 markerCenter = GetMarkerCenter(_qrTrackable, markerT);
         Quaternion markerRot = markerT.rotation;
 
         UpdateDebugVisuals(_qrTrackable, markerCenter, markerRot);
@@ -236,6 +236,23 @@ public class PassthroughQRAligner : MonoBehaviour
         Vector3 worldPos = markerCenter + worldRot * markerToBaseOffset;
 
         ApplyToRobot(worldPos, worldRot);
+    }
+
+    /// <summary>
+    /// MRUKTrackable.transform.position is the QR anchor's raw origin, which MRUK does not guarantee is
+    /// centered on the printed code — it can sit toward one edge/corner of PlaneRect, showing up as the
+    /// debug axis (and thus the whole alignment) floating slightly off the physical marker. PlaneRect's
+    /// own midpoint is the actual geometric center of the tracked plane, so prefer that when available.
+    /// </summary>
+    static Vector3 GetMarkerCenter(MRUKTrackable trackable, Transform markerT)
+    {
+        if (trackable.PlaneRect.HasValue)
+        {
+            Rect r = trackable.PlaneRect.Value;
+            Vector3 localCenter = new Vector3((r.xMin + r.xMax) * 0.5f, (r.yMin + r.yMax) * 0.5f, 0f);
+            return markerT.TransformPoint(localCenter);
+        }
+        return markerT.position;
     }
 
     void UpdateDebugVisuals(MRUKTrackable trackable, Vector3 center, Quaternion rot)

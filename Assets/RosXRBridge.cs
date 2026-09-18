@@ -59,6 +59,7 @@ public class RosXRBridge : MonoBehaviour
         ros.RegisterPublisher<BoolMsg>("/xr/task_request");
         ros.RegisterPublisher<BoolMsg>("/xr/confirm");
         ros.RegisterPublisher<BoolMsg>("/xr/reset");
+        ros.RegisterPublisher<Float32Msg>("/xr/authority_lambda");
 
         ros.Subscribe<StringMsg>("/xr/status", msg => { Debug.Log($"[RosXRBridge] RECV /xr/status = {msg.data}"); OnStatus?.Invoke(msg.data); });
         ros.Subscribe<BoolMsg>("/xr/result", msg => { Debug.Log($"[RosXRBridge] RECV /xr/result = {msg.data}"); OnResult?.Invoke(msg.data); });
@@ -122,31 +123,35 @@ public class RosXRBridge : MonoBehaviour
     public void PublishTaskRequest(bool value) => SendOrQueue("/xr/task_request", new BoolMsg(value), value.ToString());
     public void PublishConfirm(bool value) => SendOrQueue("/xr/confirm", new BoolMsg(value), value.ToString());
     public void PublishReset(bool value) => SendOrQueue("/xr/reset", new BoolMsg(value), value.ToString());
+    // Silent: DecisionEngine publishes this every ~0.2s decision epoch regardless of whether it changed,
+    // which at the normal per-publish Debug.Log verbosity floods the logcat ring buffer within seconds —
+    // evicting far rarer, far more useful events (mode commits, task results) before anyone can read them.
+    public void PublishAuthorityLambda(float lambda) => SendOrQueue("/xr/authority_lambda", new Float32Msg(lambda), lambda.ToString("F3"), silent: true);
 
     /// <summary>Publishes immediately if registration has completed; otherwise waits for Start() to
     /// finish first. This protects against other scripts (SystemStatusUI, ControlPanelUI) publishing
     /// from their own Start() before RosXRBridge's Start() has run — Unity doesn't guarantee Start()
     /// order between different components.</summary>
-    void SendOrQueue(string topic, Message msg, string valueForLog)
+    void SendOrQueue(string topic, Message msg, string valueForLog, bool silent = false)
     {
         if (_isReady)
-            DoPublish(topic, msg, valueForLog);
+            DoPublish(topic, msg, valueForLog, silent);
         else
-            StartCoroutine(PublishWhenReady(topic, msg, valueForLog));
+            StartCoroutine(PublishWhenReady(topic, msg, valueForLog, silent));
     }
 
-    IEnumerator PublishWhenReady(string topic, Message msg, string valueForLog)
+    IEnumerator PublishWhenReady(string topic, Message msg, string valueForLog, bool silent)
     {
         yield return new WaitUntil(() => _isReady);
-        DoPublish(topic, msg, valueForLog);
+        DoPublish(topic, msg, valueForLog, silent);
     }
 
-    void DoPublish(string topic, Message msg, string valueForLog)
+    void DoPublish(string topic, Message msg, string valueForLog, bool silent = false)
     {
         try
         {
             ROSConnection.GetOrCreateInstance().Publish(topic, msg);
-            Debug.Log($"[RosXRBridge] SENT {topic} = {valueForLog}");
+            if (!silent) Debug.Log($"[RosXRBridge] SENT {topic} = {valueForLog}");
         }
         catch (Exception e)
         {

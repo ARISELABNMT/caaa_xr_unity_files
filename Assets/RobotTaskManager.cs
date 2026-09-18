@@ -80,15 +80,41 @@ public class RobotTaskManager : MonoBehaviour
     [Header("ROS result wait")]
     public float taskTimeoutSeconds = 310f; // slightly longer than xr_mode_manager.py's 300s TASK_TIMEOUT_SEC
 
+    [Header("Between cycles")]
+    [Tooltip("Pause between pick-and-place cycles so DecisionEngine has room to actually adopt a mode " +
+        "change — kept >= DecisionEngine.debounceUpSeconds (default 2.0s) so even a transition that only " +
+        "started looking favorable right as the gap begins (not already banked from mid-cycle) can fully " +
+        "sustain its debounce window and commit before the next cycle locks the mode again. The two " +
+        "components don't reference each other, so keep this in sync manually if you change either value.")]
+    public float interCycleGapSeconds = 2f;
+
     /// <summary>Fires when the kitting run ends, whether by finishing all units (true) or aborting
     /// due to a failed/timed-out pick-place (false). Callers must branch on this — treating every
     /// firing as success will misreport failures as "Kit Complete".</summary>
     public Action<bool> onKittingComplete;
 
+    /// <summary>Fires at the start of BeginKitting(), before the coroutine starts — lets a results logger
+    /// open a new per-kit-run file exactly bounded to that run's actual duration.</summary>
+    public Action onKittingStarted;
+
+    /// <summary>True for the duration of one pick-and-place cycle (bin selected + task requested, until
+    /// /xr/result arrives or the wait times out) — the "current pick-and-place cycle" DecisionEngine defers
+    /// mode transitions across. False between cycles/units and when idle, even while the overall kitting
+    /// run (_isRunning) is still in progress.</summary>
+    public bool IsCycleActive { get; private set; }
+
+    /// <summary>Set by SetKit() — the kit currently queued/running, for results logging.</summary>
+    public string CurrentKitName { get; private set; } = "";
+
+    /// <summary>Set at the start of each pick-and-place cycle — the item currently being picked, for
+    /// results logging.</summary>
+    public string CurrentTaskItemName { get; private set; } = "";
+
     private int _task1Done;
     private int _task2Done;
     private bool _isRunning;
     private bool _lastStepSucceeded;
+    private Coroutine _activeCoroutine;
 
     void Awake()
     {
@@ -106,6 +132,7 @@ public class RobotTaskManager : MonoBehaviour
         if (kit == null) return;
 
         robotTasks = new List<RobotTaskItem> { kit.robotTask1, kit.robotTask2 };
+        CurrentKitName = kitName;
 
         if (taskPanel)
             taskPanel.ConfigureKit(kit);
@@ -117,7 +144,28 @@ public class RobotTaskManager : MonoBehaviour
         _isRunning = true;
         _task1Done = 0;
         _task2Done = 0;
-        StartCoroutine(RunKitting());
+        onKittingStarted?.Invoke();
+        _activeCoroutine = StartCoroutine(RunKitting());
+    }
+
+    /// <summary>Force-stops an in-progress kitting run — needed because _isRunning otherwise stays true
+    /// forever if the run is stuck mid pick-and-place waiting on a /xr/result that will never arrive (e.g.
+    /// robot halted by Safety mid-cycle), which would silently no-op every future BeginKitting() call. Call
+    /// this from Reset. No-ops if nothing is running.</summary>
+    public void AbortKitting()
+    {
+        if (!_isRunning) return;
+
+        if (_activeCoroutine != null)
+        {
+            StopCoroutine(_activeCoroutine);
+            _activeCoroutine = null;
+        }
+        IsCycleActive = false;
+        _isRunning = false;
+
+        Debug.LogWarning("RobotTaskManager: kitting run aborted.");
+        onKittingComplete?.Invoke(false);
     }
 
     private IEnumerator RunKitting()
@@ -128,6 +176,7 @@ public class RobotTaskManager : MonoBehaviour
 
             for (int unit = 0; unit < item.quantity; unit++)
             {
+                CurrentTaskItemName = item.name;
                 if (taskPanel)
                     taskPanel.UpdateNextItem(item.name, $"{item.binLocation} → Kitting Box");
 
@@ -148,6 +197,11 @@ public class RobotTaskManager : MonoBehaviour
                     taskPanel.UpdateRobotTasks(
                         robotTasks[0].name, _task1Done, robotTasks[0].quantity,
                         robotTasks[1].name, _task2Done, robotTasks[1].quantity);
+
+                // Real gap between cycles — see interCycleGapSeconds doc comment. IsCycleActive is already
+                // false at this point (RunRosPickPlace's finally already ran); this just holds that state
+                // long enough for DecisionEngine to actually observe it on its own epoch timer.
+                yield return new WaitForSeconds(interCycleGapSeconds);
             }
         }
 
@@ -157,43 +211,60 @@ public class RobotTaskManager : MonoBehaviour
 
     private IEnumerator RunRosPickPlace(RobotTaskItem item)
     {
-        if (rosBridge == null)
+        IsCycleActive = true;
+        try
         {
-            // No ROS connection configured — simulate so the UI stays testable standalone.
-            yield return new WaitForSeconds(pickDuration + placeDuration);
-            _lastStepSucceeded = true;
-            yield break;
-        }
+            if (rosBridge == null)
+            {
+                // No ROS connection configured — simulate so the UI stays testable standalone.
+                yield return new WaitForSeconds(pickDuration + placeDuration);
+                _lastStepSucceeded = true;
+                yield break;
+            }
 
-        bool done = false;
-        bool success = false;
-        void OnResult(bool ok) { success = ok; done = true; }
+            bool done = false;
+            bool success = false;
+            void OnResult(bool ok) { success = ok; done = true; }
 
-        rosBridge.OnResult += OnResult;
-        rosBridge.PublishSelectedBin(item.binId);
-        rosBridge.PublishTaskRequest(true);
+            rosBridge.OnResult += OnResult;
+            try
+            {
+                rosBridge.PublishSelectedBin(item.binId);
+                rosBridge.PublishTaskRequest(true);
 
-        float elapsed = 0f;
-        while (!done && elapsed < taskTimeoutSeconds)
-        {
-            elapsed += Time.deltaTime;
-            yield return null;
-        }
-        rosBridge.OnResult -= OnResult;
+                float elapsed = 0f;
+                while (!done && elapsed < taskTimeoutSeconds)
+                {
+                    elapsed += Time.deltaTime;
+                    yield return null;
+                }
+            }
+            finally
+            {
+                // Nested try/finally so AbortKitting()'s StopCoroutine (which disposes this enumerator
+                // while suspended mid-wait) still unsubscribes — otherwise repeated aborts pile up stale
+                // OnResult handlers that fire on every future /xr/result forever.
+                rosBridge.OnResult -= OnResult;
+            }
 
-        if (!done)
-        {
-            Debug.LogWarning($"RobotTaskManager: timed out waiting for /xr/result — {item.name} (Bin {item.binId}). Robot may be in Safety halt or unreachable.");
-            _lastStepSucceeded = false;
+            if (!done)
+            {
+                Debug.LogWarning($"RobotTaskManager: timed out waiting for /xr/result — {item.name} (Bin {item.binId}). Robot may be in Safety halt or unreachable.");
+                _lastStepSucceeded = false;
+            }
+            else if (!success)
+            {
+                Debug.LogWarning($"RobotTaskManager: pick-place reported failure — {item.name} (Bin {item.binId}).");
+                _lastStepSucceeded = false;
+            }
+            else
+            {
+                _lastStepSucceeded = true;
+            }
         }
-        else if (!success)
+        finally
         {
-            Debug.LogWarning($"RobotTaskManager: pick-place reported failure — {item.name} (Bin {item.binId}).");
-            _lastStepSucceeded = false;
-        }
-        else
-        {
-            _lastStepSucceeded = true;
+            IsCycleActive = false;
         }
     }
 }
