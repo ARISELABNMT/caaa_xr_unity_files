@@ -1,4 +1,4 @@
-# MetaTrack — XR Human-Robot Collaborative Kitting System
+# CAAA Unity Project Info
 
 Unity/Meta Quest 3 client for a mixed-reality, human-robot collaborative **kitting** cell built around a
 real **UFactory xArm Lite6**, controlled and supervised over **ROS 2**. The headset renders a live digital
@@ -16,7 +16,6 @@ node, the xArm driver) lives in a separate workspace — see [ROS 2 side](#ros-2
 ## Table of Contents
 
 - [Overview](#overview)
-- [System Architecture](#system-architecture)
 - [Repository Layout](#repository-layout)
 - [Prerequisites](#prerequisites)
 - [Setup](#setup)
@@ -49,34 +48,6 @@ latch on the in-headset Control Panel.
 
 Everything the operator needs is presented as three in-headset UI panels — **Task**, **System Status**, and
 **Control** — plus a Confirmation popup for step-by-step approvals in Human-Led/Shared modes.
-
-## System Architecture
-
-```
-┌─────────────────────────────── Meta Quest 3 (this repo) ───────────────────────────────┐
-│                                                                                          │
-│  DigitalHumanTracker ──▶ GhostSurfaceRiskTest ──▶ DecisionEngine ──▶ SystemStatusUI      │
-│  (OVRBody skeleton)      R(t) = P·I·S (ISO/TS        │  (Table IV lookup      (Task /    │
-│                           15066, mesh-vs-capsule)     │   + debounce + λ(t))   Status /   │
-│                                                        │                       Control    │
-│  CognitiveLoadDataStreamer ───────────────────────────┘                       panels)    │
-│  (plain TCP, external ML model) ── C(t)                                                  │
-│                                                                                          │
-│  RosXRBridge  ◀──────────────────────────────────────────────────────────────────────┐  │
-│  (ROS-TCP-Connector)                                                                  │  │
-│  RobotTaskManager (kitting loop) ─── ResultsLogger (per-run CSV) ── analysis/*.py ──▶ paper│
-│  PassthroughQRAligner (MRUK QR tracking → aligns ghost robot to real robot base)         │
-└──────────────────────────────────────┬───────────────────────────────────────────────┘
-                                        │ rosbridge / ROS-TCP-Connector (TCP, port 10000)
-                                        ▼
-┌─────────────────────────────── ROS 2 (separate workspace) ─────────────────────────────┐
-│  xr_mode_manager.py  ──  Adaptive Autonomy Controller  ──  MoveIt2  ──  xArm Lite6 driver│
-└──────────────────────────────────────────────────────────────────────────────────────┘
-```
-
-A second, independent TCP link (plain sockets, not ROS) connects `CognitiveLoadDataStreamer` to a Python
-process running the cognitive-load classifier — this is deliberately decoupled from the ROS bridge so it can
-be added/removed without touching any robot-related code.
 
 ## Repository Layout
 
